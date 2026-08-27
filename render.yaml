@@ -1,0 +1,36 @@
+databases:
+  - name: intern-db
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: intern-gateway
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.gateway.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: intern-db
+          property: connectionString
+      - fromGroup: intern-secrets
+
+  - type: worker
+    name: intern-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m src.queue.worker
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: intern-db
+          property: connectionString
+      - fromGroup: intern-secrets
+
+# Create an env group named "intern-secrets" in the Render dashboard containing
+# every variable from .env.example except DATABASE_URL.
+envVarGroups:
+  - name: intern-secrets
