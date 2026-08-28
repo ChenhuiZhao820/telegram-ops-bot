@@ -60,6 +60,7 @@ class OtterToken(Base):
     access_token: Mapped[str] = mapped_column(Text)
     refresh_token: Mapped[str] = mapped_column(Text)
     seed_refresh_token: Mapped[str] = mapped_column(Text)
+    seed_access_token: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -84,7 +85,18 @@ def get_engine():
 
 
 def init_db() -> None:
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    # Best-effort migration for deployments created before seed_access_token
+    # existed (create_all never alters existing tables).
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE otter_tokens ADD COLUMN seed_access_token TEXT DEFAULT ''"))
+    except Exception:
+        pass  # column already exists
 
 
 def db_session() -> Session:

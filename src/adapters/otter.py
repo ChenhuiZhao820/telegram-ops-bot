@@ -37,15 +37,19 @@ def _load_tokens() -> tuple[str, str]:
     created the DB row, a human re-authed, so the row is reseeded from env."""
     from src.queue.models import OtterToken, db_session
 
-    env_access = os.environ["OTTER_ACCESS_TOKEN"]
-    env_refresh = os.environ.get("OTTER_REFRESH_TOKEN", "")
+    # Strip aggressively: values pasted into dashboards pick up stray
+    # whitespace/newlines, which make the Authorization header illegal.
+    env_access = "".join(os.environ["OTTER_ACCESS_TOKEN"].split())
+    env_refresh = "".join(os.environ.get("OTTER_REFRESH_TOKEN", "").split())
     with db_session() as db:
         row = db.get(OtterToken, 1)
-        if row is None or row.seed_refresh_token != env_refresh:
+        if (row is None or row.seed_refresh_token != env_refresh
+                or (row.seed_access_token or "") != env_access):
             row = row or OtterToken(id=1)
             row.access_token = env_access
             row.refresh_token = env_refresh
             row.seed_refresh_token = env_refresh
+            row.seed_access_token = env_access
             db.add(row)
             db.commit()
             logger.info("Seeded Otter tokens from environment")
