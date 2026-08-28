@@ -30,11 +30,43 @@ def _mcp_url() -> str:
     return os.environ.get("OTTER_MCP_URL", "https://mcp.otter.ai/mcp")
 
 
+def _load_tokens() -> tuple[str, str]:
+    """Tokens live in the database because Otter rotates the refresh token on
+    every use and env vars can't be updated from a running process. The env
+    vars act as the seed: if OTTER_REFRESH_TOKEN differs from the seed that
+    created the DB row, a human re-authed, so the row is reseeded from env."""
+    from src.queue.models import OtterToken, db_session
+
+    env_access = os.environ["OTTER_ACCESS_TOKEN"]
+    env_refresh = os.environ.get("OTTER_REFRESH_TOKEN", "")
+    with db_session() as db:
+        row = db.get(OtterToken, 1)
+        if row is None or row.seed_refresh_token != env_refresh:
+            row = row or OtterToken(id=1)
+            row.access_token = env_access
+            row.refresh_token = env_refresh
+            row.seed_refresh_token = env_refresh
+            db.add(row)
+            db.commit()
+            logger.info("Seeded Otter tokens from environment")
+        return row.access_token, row.refresh_token
+
+
+def _save_tokens(access: str, refresh: str) -> None:
+    from src.queue.models import OtterToken, db_session
+
+    with db_session() as db:
+        row = db.get(OtterToken, 1)
+        row.access_token = access
+        if refresh:
+            row.refresh_token = refresh
+        db.commit()
+    logger.info("Persisted rotated Otter tokens to the database")
+
+
 async def _refresh_token() -> bool:
-    """Try an OAuth refresh. Returns True if a new access token was stored.
-    TODO(lynn): the exact token endpoint/client id come from scripts/otter_auth.py
-    output; if absent we simply can't refresh."""
-    refresh = os.environ.get("OTTER_REFRESH_TOKEN")
+    """Try an OAuth refresh. Returns True if a new access token was stored."""
+    _, refresh = _load_tokens()
     token_url = os.environ.get("OTTER_TOKEN_URL")
     client_id = os.environ.get("OTTER_CLIENT_ID")
     if not (refresh and token_url and client_id):
@@ -48,32 +80,11 @@ async def _refresh_token() -> bool:
             })
             resp.raise_for_status()
             data = resp.json()
-        os.environ["OTTER_ACCESS_TOKEN"] = data["access_token"]
-        if data.get("refresh_token") and data["refresh_token"] != refresh:
-            os.environ["OTTER_REFRESH_TOKEN"] = data["refresh_token"]
-            _persist_rotated_refresh_token(data["refresh_token"])
+        _save_tokens(data["access_token"], data.get("refresh_token", ""))
         return True
     except Exception:
         logger.warning("Otter token refresh failed", exc_info=True)
         return False
-
-
-def _persist_rotated_refresh_token(new_token: str) -> None:
-    """If Otter rotates the refresh token, write it back to .env (local dev)
-    so restarts keep working. On Render there is no .env; the env var must be
-    updated in the dashboard, so log loudly instead."""
-    if not os.path.exists(".env"):
-        logger.warning("Otter rotated the refresh token; update OTTER_REFRESH_TOKEN "
-                       "in the Render env vars or the next restart will fail auth.")
-        return
-    try:
-        lines = open(".env", encoding="utf-8").read().splitlines()
-        lines = [f"OTTER_REFRESH_TOKEN={new_token}"
-                 if line.startswith("OTTER_REFRESH_TOKEN=") else line for line in lines]
-        open(".env", "w", encoding="utf-8").write("\n".join(lines) + "\n")
-        logger.info("Persisted rotated Otter refresh token to .env")
-    except Exception:
-        logger.warning("Could not persist rotated Otter refresh token", exc_info=True)
 
 
 @asynccontextmanager
@@ -82,7 +93,8 @@ async def _mcp_session():
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
-    headers = {"Authorization": f"Bearer {os.environ['OTTER_ACCESS_TOKEN']}"}
+    access, _ = _load_tokens()
+    headers = {"Authorization": f"Bearer {access}"}
     async with streamablehttp_client(_mcp_url(), headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()

@@ -49,6 +49,20 @@ class Task(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class OtterToken(Base):
+    """Single-row store for Otter OAuth tokens. Otter rotates the refresh token
+    on every use, so tokens must outlive process restarts (env vars can't).
+    seed_refresh_token remembers which env-provided token seeded this row: when
+    a human re-auths and updates the env var, the row is reseeded from env."""
+    __tablename__ = "otter_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    access_token: Mapped[str] = mapped_column(Text)
+    refresh_token: Mapped[str] = mapped_column(Text)
+    seed_refresh_token: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class DevinSession(Base):
     __tablename__ = "devin_sessions"
 
