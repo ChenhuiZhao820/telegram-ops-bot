@@ -39,8 +39,12 @@ async def _request(method: str, path: str, **kwargs):
 
 
 async def create_devin_session(args: dict):
+    # bypass_approval: the founders' approval gate lives in Telegram (the
+    # confirm button before this tool runs); Devin's own safe-mode approval
+    # prompts would otherwise stall sessions with nobody there to click Allow.
     result = await _request("POST", _org_path("/sessions"),
-                            json={"prompt": args["task_description"]})
+                            json={"prompt": args["task_description"],
+                                  "bypass_approval": True})
     if isinstance(result, dict) and result.get("error"):
         return result
     session_id = result.get("session_id")
@@ -77,6 +81,13 @@ async def get_devin_session(args: dict):
     return status
 
 
+async def archive_devin_session(args: dict):
+    result = await _request("POST", _org_path(f"/sessions/{args['session_id']}/archive"))
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {"archived": True, "session_id": args["session_id"]}
+
+
 async def send_message_to_devin(args: dict):
     result = await _request("POST", _org_path(f"/sessions/{args['session_id']}/messages"),
                             json={"message": args["message"]})
@@ -105,17 +116,28 @@ async def load_tools() -> list[Tool]:
             name="get_devin_session",
             description=("Get the status and latest output of a Devin session. If session_id "
                          "is omitted, returns the most recent session's status. Pass "
-                         "list_recent=true to list recent sessions instead."),
+                         "list_recent=true to list recent sessions instead. If status_detail "
+                         "is 'waiting_for_user', Devin has a question — relay it to the founder "
+                         "and forward their answer with send_message_to_devin."),
             input_schema={"type": "object",
                           "properties": {"session_id": {"type": "string"},
                                          "list_recent": {"type": "boolean"}}},
             risk="read", handler=get_devin_session),
         Tool(
             name="send_message_to_devin",
-            description="Send a follow-up instruction to a running Devin session.",
+            description=("Send a follow-up instruction or an answer to Devin's question in a "
+                         "session. Automatically resumes the session if it was suspended."),
             input_schema={"type": "object",
                           "properties": {"session_id": {"type": "string"},
                                          "message": {"type": "string"}},
                           "required": ["session_id", "message"]},
             risk="write", handler=send_message_to_devin),
+        Tool(
+            name="archive_devin_session",
+            description=("Close (archive) a Devin session that is finished or no longer "
+                         "needed, so it stops consuming attention and resources."),
+            input_schema={"type": "object",
+                          "properties": {"session_id": {"type": "string"}},
+                          "required": ["session_id"]},
+            risk="write", handler=archive_devin_session),
     ]
