@@ -15,11 +15,16 @@ from src.queue.models import DevinSession, db_session
 
 logger = logging.getLogger(__name__)
 
-API = "https://api.devin.ai/v1"
+# v3 API: service-user keys (cog_...) scoped to an organization.
+API = "https://api.devin.ai/v3"
 
 
 def _headers() -> dict:
     return {"Authorization": f"Bearer {os.environ['DEVIN_API_KEY']}"}
+
+
+def _org_path(path: str) -> str:
+    return f"/organizations/{os.environ['DEVIN_ORG_ID']}{path}"
 
 
 async def _request(method: str, path: str, **kwargs):
@@ -34,7 +39,8 @@ async def _request(method: str, path: str, **kwargs):
 
 
 async def create_devin_session(args: dict):
-    result = await _request("POST", "/sessions", json={"prompt": args["task_description"]})
+    result = await _request("POST", _org_path("/sessions"),
+                            json={"prompt": args["task_description"]})
     if isinstance(result, dict) and result.get("error"):
         return result
     session_id = result.get("session_id")
@@ -58,18 +64,21 @@ async def get_devin_session(args: dict):
     session_id = args.get("session_id") or (recent_list[0]["session_id"] if recent_list else None)
     if not session_id:
         return {"error": "No Devin sessions found. Start one with create_devin_session."}
-    status = await _request("GET", f"/sessions/{session_id}")
+    status = await _request("GET", _org_path(f"/sessions/{session_id}"))
     if isinstance(status, dict) and not status.get("error"):
         status = {"session_id": session_id,
-                  "status": status.get("status_enum") or status.get("status"),
+                  "status": status.get("status"),
+                  "status_detail": status.get("status_detail"),
                   "title": status.get("title"),
                   "structured_output": status.get("structured_output"),
-                  "url": f"https://app.devin.ai/sessions/{session_id.removeprefix('devin-')}"}
+                  "pull_requests": status.get("pull_requests"),
+                  "url": status.get("url")
+                  or f"https://app.devin.ai/sessions/{session_id.removeprefix('devin-')}"}
     return status
 
 
 async def send_message_to_devin(args: dict):
-    result = await _request("POST", f"/sessions/{args['session_id']}/message",
+    result = await _request("POST", _org_path(f"/sessions/{args['session_id']}/messages"),
                             json={"message": args["message"]})
     if isinstance(result, dict) and result.get("error"):
         return result
@@ -79,6 +88,8 @@ async def send_message_to_devin(args: dict):
 async def load_tools() -> list[Tool]:
     if not os.environ.get("DEVIN_API_KEY"):
         raise ValueError("DEVIN_API_KEY not set")
+    if not os.environ.get("DEVIN_ORG_ID"):
+        raise ValueError("DEVIN_ORG_ID not set (org-... ID required by the v3 API)")
     return [
         Tool(
             name="create_devin_session",
