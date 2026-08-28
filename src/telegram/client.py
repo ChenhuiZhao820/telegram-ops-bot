@@ -48,3 +48,13 @@ async def edit_message(chat_id: str, message_id: int, text: str) -> dict:
 
 async def answer_callback_query(callback_query_id: str, text: str = "") -> dict:
     return await _post("answerCallbackQuery", {"callback_query_id": callback_query_id, "text": text})
+
+
+async def delete_message(chat_id: str, message_id: int) -> dict:
+    return await _post("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+
+async def send_chat_action(chat_id: str, action: str = "typing") -> dict:
+    """Shows 'typing…' in the chat header. Telegram expires it after ~5s,
+    so callers re-send it periodically while work is in progress."""
+    return await _post("sendChatAction", {"chat_id": chat_id, "action": action})

@@ -44,6 +44,8 @@ class Task(Base):
     tools_called: Mapped[list | None] = mapped_column(JSON, nullable=True)
     reply: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Telegram message_id of the "Thinking…" placeholder, deleted when replying.
+    ack_message_id: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -91,12 +93,13 @@ def init_db() -> None:
     # existed (create_all never alters existing tables).
     from sqlalchemy import text
 
-    try:
-        with engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE otter_tokens ADD COLUMN seed_access_token TEXT DEFAULT ''"))
-    except Exception:
-        pass  # column already exists
+    for ddl in ("ALTER TABLE otter_tokens ADD COLUMN seed_access_token TEXT DEFAULT ''",
+                "ALTER TABLE tasks ADD COLUMN ack_message_id INTEGER"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+        except Exception:
+            pass  # column already exists
 
 
 def db_session() -> Session:

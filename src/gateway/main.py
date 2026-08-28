@@ -67,13 +67,15 @@ async def telegram_webhook(request: Request) -> Response:
     if await _try_resolve_pending_by_text(str(chat_id), text):
         return Response(status_code=200)
 
+    ack = await tg.send_message(chat_id, "Thinking…")
+    ack_id = (ack.get("result") or {}).get("message_id")
     with db_session() as db:
-        task = Task(telegram_chat_id=str(chat_id), telegram_user_id=str(user_id), instruction=text)
+        task = Task(telegram_chat_id=str(chat_id), telegram_user_id=str(user_id),
+                    instruction=text, ack_message_id=ack_id)
         db.add(task)
         db.commit()
         task_id = task.id
     logger.info("Enqueued task %s for user %s", task_id, user_id)
-    await tg.send_message(chat_id, "Got it, working on it.")
     return Response(status_code=200)
 
 

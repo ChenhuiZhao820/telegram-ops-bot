@@ -43,6 +43,17 @@ def _inherited_state(db, task: Task) -> dict | None:
     return build_followup_state(prev_messages, task.instruction)
 
 
+async def _keep_typing(chat_id: str) -> None:
+    """Re-sends Telegram's 'typing…' chat action (it expires after ~5s) until
+    cancelled, so users see the bot is thinking/executing the whole time."""
+    while True:
+        try:
+            await tg.send_chat_action(chat_id)
+        except Exception:
+            pass  # a failed indicator must never affect the task
+        await asyncio.sleep(4)
+
+
 async def process_task(task_id: int, registry) -> None:
     with db_session() as db:
         task = db.get(Task, task_id)
@@ -52,9 +63,19 @@ async def process_task(task_id: int, registry) -> None:
         state = task.conversation_state
         pending = task.pending_tool_call
         created_at = task.created_at
+        ack_id = task.ack_message_id
         if state is None and pending is None:
             state = _inherited_state(db, task)
         db.commit()
+
+    async def clear_ack() -> None:
+        nonlocal ack_id
+        if ack_id:
+            await tg.delete_message(chat_id, ack_id)
+            ack_id = None
+            with db_session() as db:
+                db.get(Task, task_id).ack_message_id = None
+                db.commit()
 
     approved_call = None
     if (pending or {}).get("approved"):
@@ -65,11 +86,14 @@ async def process_task(task_id: int, registry) -> None:
     current_user_id.set(user_id)
     logger.info("Running task %s for user %s", task_id, user_id)
 
+    # Show "typing…" in the chat for as long as the task is actually running.
+    typing = asyncio.create_task(_keep_typing(chat_id))
     try:
         outcome = await run_task(instruction, registry, state=state, approved_call=approved_call)
     except Exception:
         logger.exception("Task %s failed", task_id)
         reply = "Couldn't reach the AI service, try again in a minute."
+        await clear_ack()
         await tg.send_message(chat_id, reply)
         duration = (utcnow() - as_utc(created_at)).total_seconds()
         with db_session() as db:
@@ -79,6 +103,8 @@ async def process_task(task_id: int, registry) -> None:
         await log_execution(user_id, instruction, (state or {}).get("tools_called", []),
                             "failed", reply, duration)
         return
+    finally:
+        typing.cancel()
 
     if isinstance(outcome, NeedsConfirmation):
         with db_session() as db:
@@ -88,6 +114,7 @@ async def process_task(task_id: int, registry) -> None:
             task.pending_tool_call = outcome.pending_tool_call
             task.expires_at = utcnow() + CONFIRMATION_TTL
             db.commit()
+        await clear_ack()
         await tg.send_confirmation_buttons(chat_id, outcome.description, task_id)
         return
 
@@ -99,6 +126,7 @@ async def process_task(task_id: int, registry) -> None:
             task.pending_tool_call = {"continue": True}
             task.expires_at = utcnow() + CONFIRMATION_TTL
             db.commit()
+        await clear_ack()
         await tg.send_confirmation_buttons(
             chat_id,
             f"This is taking many steps (done so far: {outcome.progress}). Continue?",
@@ -115,6 +143,7 @@ async def process_task(task_id: int, registry) -> None:
         task.duration_s = duration
         task.conversation_state = {"messages": outcome.messages}
         db.commit()
+    await clear_ack()
     await tg.send_message(chat_id, outcome.reply)
     await log_execution(user_id, instruction, outcome.tools_called, "success",
                         outcome.reply, duration)
