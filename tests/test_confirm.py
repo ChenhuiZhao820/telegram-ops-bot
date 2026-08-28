@@ -24,6 +24,11 @@ def test_unknown_write_tool_falls_back():
     assert "some_future_tool" in text and text.endswith("Confirm?")
 
 
+def test_close_session_description():
+    text = describe_pending_action("close_session", {})
+    assert "Close this session" in text and "context" in text
+
+
 def test_describe_pending_continue():
     assert "Continue" in describe_pending({"continue": True})
     assert "Contacts" in describe_pending(

@@ -28,6 +28,8 @@ def describe_pending_action(tool_name: str, tool_input: dict) -> str:
     if tool_name == "create_devin_session":
         return (f"Start a Devin session: '{tool_input.get('task_description')}' "
                 f"This spends Devin credits. Confirm?")
+    if tool_name == "close_session":
+        return "Close this session and clear its context. Confirm?"
     if tool_name == "archive_devin_session":
         return f"Close (archive) Devin session {tool_input.get('session_id')}. Confirm?"
     if tool_name == "send_message_to_devin":

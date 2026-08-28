@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # Set by the worker before run_task; read by adapters that record provenance.
 current_user_id: ContextVar[str] = ContextVar("current_user_id", default="unknown")
 
-ADAPTER_MODULES = ["src.adapters.airtable", "src.adapters.devin", "src.adapters.otter"]
+ADAPTER_MODULES = ["src.adapters.airtable", "src.adapters.devin", "src.adapters.otter",
+                   "src.adapters.sessions"]
 
 
 @dataclass

@@ -6,6 +6,7 @@ Run with: python -m src.queue.worker
 
 import asyncio
 import logging
+import os
 from datetime import timedelta
 
 from dotenv import load_dotenv
@@ -25,9 +26,9 @@ logger = logging.getLogger(__name__)
 
 CONFIRMATION_TTL = timedelta(minutes=15)
 POLL_INTERVAL_S = 1
-# A new message within this window of the previous task finishing inherits its
-# conversation; anything later is treated as a fresh topic.
-CONTEXT_TTL = timedelta(minutes=15)
+# Chat context persists until the founder agrees to close the session (via the
+# close_session tool). The TTL is only a safety net against very stale context.
+CONTEXT_TTL = timedelta(hours=float(os.environ.get("CONTEXT_TTL_HOURS", "48")))
 
 
 def _inherited_state(db, task: Task) -> dict | None:
@@ -41,6 +42,14 @@ def _inherited_state(db, task: Task) -> dict | None:
         return None
     logger.info("Task %s inherits context from task %s", task.id, prev.id)
     return build_followup_state(prev_messages, task.instruction)
+
+
+def _final_messages(outcome: Completed) -> list:
+    """The session boundary: a task that closed the session stores an empty
+    conversation, so the next message starts fresh instead of inheriting."""
+    if any(t["tool"] == "close_session" for t in outcome.tools_called):
+        return []
+    return outcome.messages
 
 
 async def _keep_typing(chat_id: str) -> None:
@@ -141,7 +150,7 @@ async def process_task(task_id: int, registry) -> None:
         task.reply = outcome.reply
         task.tools_called = outcome.tools_called
         task.duration_s = duration
-        task.conversation_state = {"messages": outcome.messages}
+        task.conversation_state = {"messages": _final_messages(outcome)}
         db.commit()
     await clear_ack()
     await tg.send_message(chat_id, outcome.reply)

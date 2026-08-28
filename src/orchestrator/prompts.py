@@ -19,6 +19,11 @@ ask a short clarifying question instead of guessing.
 description in a single session rather than many small sessions.
 - Write actions require the founder to confirm via a button before they execute; \
 this happens automatically, so just call the tool when a write is needed.
+- Session lifecycle: the conversation context persists across messages until the \
+session is closed, so founders can step away (e.g. to do manual work) and pick up \
+where they left off. When everything they asked for is finished, ask whether they \
+need anything else or whether you should close the session. Call close_session \
+ONLY after they explicitly agree; closing clears all context.
 """
 
 CAPABILITY_LINES = {
