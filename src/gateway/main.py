@@ -32,6 +32,16 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def strip_mention(text: str, bot_username: str) -> str | None:
+    """Returns the text with the bot's @mention removed, or None if the bot
+    was not mentioned (group messages without a mention are ignored)."""
+    tag = f"@{bot_username}".lower()
+    idx = text.lower().find(tag)
+    if idx == -1:
+        return None
+    return (text[:idx] + text[idx + len(tag):]).strip()
+
+
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request) -> Response:
     if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != os.environ.get("TELEGRAM_WEBHOOK_SECRET"):
@@ -49,6 +59,15 @@ async def telegram_webhook(request: Request) -> Response:
 
     user_id = (message.get("from") or {}).get("id")
     chat_id = message["chat"]["id"]
+
+    # In group chats, only react to messages that explicitly @mention the bot;
+    # everything else is other people's conversation and is ignored silently.
+    if message["chat"].get("type") != "private":
+        stripped = strip_mention(message.get("text") or "", await tg.get_bot_username())
+        if stripped is None:
+            return Response(status_code=200)
+        message["text"] = stripped
+
     if not is_allowed(user_id):
         logger.info("Rejected message from non-whitelisted user %s", user_id)
         await tg.send_message(chat_id, "This is a private bot.")

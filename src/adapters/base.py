@@ -14,9 +14,10 @@ from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
-# Telegram user ID of the founder whose task is currently executing.
-# Set by the worker before run_task; read by adapters that record provenance.
+# Telegram user/chat of the task currently executing. Set by the worker before
+# run_task; read by adapters that record provenance or need a reply target.
 current_user_id: ContextVar[str] = ContextVar("current_user_id", default="unknown")
+current_chat_id: ContextVar[str] = ContextVar("current_chat_id", default="")
 
 ADAPTER_MODULES = ["src.adapters.airtable", "src.adapters.devin", "src.adapters.otter",
                    "src.adapters.sessions"]

@@ -10,8 +10,8 @@ import os
 import httpx
 from sqlalchemy import select
 
-from src.adapters.base import Tool, current_user_id
-from src.queue.models import DevinSession, db_session
+from src.adapters.base import Tool, current_chat_id, current_user_id
+from src.queue.models import DevinSession, db_session, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,8 @@ async def create_devin_session(args: dict):
         with db_session() as db:
             db.add(DevinSession(session_id=session_id,
                                 task_description=args["task_description"],
-                                created_by=current_user_id.get()))
+                                created_by=current_user_id.get(),
+                                chat_id=current_chat_id.get() or current_user_id.get()))
             db.commit()
     return {"session_id": session_id, "url": result.get("url")}
 
@@ -94,6 +95,59 @@ async def send_message_to_devin(args: dict):
     if isinstance(result, dict) and result.get("error"):
         return result
     return {"sent": True, "session_id": args["session_id"]}
+
+
+TERMINAL = ("exit", "error")
+WATCH_WINDOW_DAYS = 7
+
+
+def attention_message(status: str, detail: str, task: str, url: str) -> str | None:
+    """Human message for a state that needs the founder's awareness, or None
+    if the state is routine (e.g. actively working)."""
+    label = f"*Devin update* ({task[:80]}):\n"
+    if detail == "waiting_for_user":
+        return label + f"Devin has a question and is waiting for your input. Ask me \"how's Devin doing\" for details, or tell me what to answer.\n{url}"
+    if detail == "waiting_for_approval":
+        return label + f"Devin is waiting for an action approval.\n{url}"
+    if detail == "finished" or status == "exit":
+        return label + f"Devin finished the task. Ask me for the results.\n{url}"
+    if status == "error" or detail == "error":
+        return label + f"Devin hit an error and stopped.\n{url}"
+    if status == "suspended" and detail not in ("user_request",):
+        reason = (detail or "unknown reason").replace("_", " ")
+        return label + f"Devin was suspended ({reason}) and is NOT making progress. It may need repo access, credits, or a nudge.\n{url}"
+    return None
+
+
+async def watch_sessions() -> list[tuple[str, str]]:
+    """Polls recent sessions; returns (chat_id, message) notifications for any
+    session whose state changed to something the founder should know about."""
+    from datetime import timedelta
+
+    notifications: list[tuple[str, str]] = []
+    with db_session() as db:
+        rows = db.scalars(select(DevinSession).where(
+            DevinSession.created_at >= utcnow() - timedelta(days=WATCH_WINDOW_DAYS))).all()
+        for row in rows:
+            prev = row.last_status or ""
+            if prev.split("/")[0] in TERMINAL or prev.endswith("/finished"):
+                continue  # already reported a terminal state, stop polling it
+            data = await _request("GET", _org_path(f"/sessions/{row.session_id}"))
+            if not isinstance(data, dict) or data.get("error"):
+                continue
+            status, detail = data.get("status", ""), data.get("status_detail") or ""
+            state = f"{status}/{detail}"
+            if state == prev:
+                continue
+            row.last_status = state
+            # Routine states (working etc.) yield None, so even the first
+            # observation after creation notifies only when action is needed.
+            msg = attention_message(status, detail, row.task_description,
+                                    data.get("url") or "")
+            if msg and row.chat_id:
+                notifications.append((row.chat_id, msg))
+        db.commit()
+    return notifications
 
 
 async def load_tools() -> list[Tool]:

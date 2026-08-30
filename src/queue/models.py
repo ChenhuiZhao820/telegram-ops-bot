@@ -74,6 +74,9 @@ class DevinSession(Base):
     task_description: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_by: Mapped[str] = mapped_column(String(64))
+    # Chat to notify when the session changes state; watcher bookkeeping.
+    chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 _engine = None
@@ -94,7 +97,9 @@ def init_db() -> None:
     from sqlalchemy import text
 
     for ddl in ("ALTER TABLE otter_tokens ADD COLUMN seed_access_token TEXT DEFAULT ''",
-                "ALTER TABLE tasks ADD COLUMN ack_message_id INTEGER"):
+                "ALTER TABLE tasks ADD COLUMN ack_message_id INTEGER",
+                "ALTER TABLE devin_sessions ADD COLUMN chat_id VARCHAR(64)",
+                "ALTER TABLE devin_sessions ADD COLUMN last_status TEXT"):
         try:
             with engine.begin() as conn:
                 conn.execute(text(ddl))

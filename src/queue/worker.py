@@ -15,7 +15,7 @@ from sqlalchemy import select
 load_dotenv()  # no-op in production; picks up .env for local dev
 
 from src.adapters.airtable import log_execution
-from src.adapters.base import build_registry, current_user_id
+from src.adapters.base import build_registry, current_chat_id, current_user_id
 from src.orchestrator.loop import (Completed, NeedsConfirmation, NeedsContinuation,
                                    build_followup_state, run_task)
 from src.queue.models import Task, as_utc, db_session, init_db, utcnow
@@ -93,6 +93,7 @@ async def process_task(task_id: int, registry) -> None:
         else:
             approved_call = pending
     current_user_id.set(user_id)
+    current_chat_id.set(chat_id)
     logger.info("Running task %s for user %s", task_id, user_id)
 
     # Show "typing…" in the chat for as long as the task is actually running.
@@ -175,12 +176,33 @@ async def sweep_expired() -> None:
         await log_execution(user_id, instruction, tools_called, "expired", "Cancelled.", duration)
 
 
+DEVIN_WATCH_INTERVAL_S = float(os.environ.get("DEVIN_WATCH_INTERVAL_S", "10"))
+
+
+async def watch_devin() -> None:
+    """Pushes Devin session state changes (halts, questions, finishes) to the
+    founder's chat immediately instead of waiting for them to ask."""
+    from src.adapters import devin
+
+    try:
+        for chat_id, message in await devin.watch_sessions():
+            await tg.send_message(chat_id, message)
+    except Exception:
+        logger.warning("Devin session watch failed", exc_info=True)
+
+
 async def main() -> None:
     init_db()
     registry = await build_registry()
     logger.info("Worker started with capabilities: %s", registry.capabilities)
+    last_watch = 0.0
     while True:
         await sweep_expired()
+        if "devin" in registry.capabilities:
+            now = asyncio.get_event_loop().time()
+            if now - last_watch >= DEVIN_WATCH_INTERVAL_S:
+                last_watch = now
+                await watch_devin()
         with db_session() as db:
             task = db.scalars(select(Task).where(Task.status == "queued")
                               .order_by(Task.created_at).limit(1)).first()

@@ -7,6 +7,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_bot_username: str | None = None
+
+
+async def get_bot_username() -> str:
+    global _bot_username
+    if _bot_username is None:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(_api("getMe"))
+            _bot_username = resp.json()["result"]["username"]
+    return _bot_username
+
 
 def _api(method: str) -> str:
     return f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/{method}"
